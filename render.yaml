@@ -9,7 +9,6 @@ services:
     name: kit-app-api
     runtime: python
     plan: free
-    rootDir: backend
     buildCommand: ./build.sh
     startCommand: gunicorn wsgi:app
     envVars:
