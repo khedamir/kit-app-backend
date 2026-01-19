@@ -77,6 +77,39 @@ Authorization: Bearer <access_token>
 
 ---
 
+### 1.4 POST `/auth/register`
+
+Регистрация нового пользователя (только для студентов).
+
+**Body:**
+
+```json
+{
+  "email": "student2@kit.local",
+  "password": "123456"
+}
+```
+
+**201 Created:**
+
+```json
+{
+  "message": "registered successfully",
+  "access_token": "...",
+  "refresh_token": "...",
+  "user": { "id": 2, "email": "student2@kit.local", "role": "student" }
+}
+```
+
+**Ошибки:**
+
+| Код | Описание                          |
+| --- | --------------------------------- |
+| 400 | Нет email/password или пароль < 6 символов |
+| 409 | Email уже зарегистрирован        |
+
+---
+
 ## 2. Student Profile
 
 ### 2.1 GET `/students/me`
