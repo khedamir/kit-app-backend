@@ -110,6 +110,46 @@ Authorization: Bearer <access_token>
 
 ---
 
+### 1.5 POST `/auth/register-admin`
+
+Регистрация нового администратора.
+
+**Важно:** Первый админ создаётся **без авторизации**. Последующие админы могут создаваться только существующими админами (требуется Bearer token).
+
+**Body:**
+
+```json
+{
+  "email": "admin@kit.local",
+  "password": "admin123",
+  "full_name": "Иван Иванов",
+  "position": "Системный администратор"
+```
+
+> `full_name` и `position` опциональны
+
+**201 Created:**
+
+```json
+{
+  "message": "admin registered successfully",
+  "access_token": "...",
+  "refresh_token": "...",
+  "user": { "id": 2, "email": "admin@kit.local", "role": "admin" }
+}
+```
+
+**Ошибки:**
+
+| Код | Описание                          |
+| --- | --------------------------------- |
+| 400 | Нет email/password или пароль < 6 символов |
+| 401 | Требуется авторизация (если админы уже есть) |
+| 403 | Только существующие админы могут создавать новых |
+| 409 | Email уже зарегистрирован        |
+
+---
+
 ## 2. Student Profile
 
 ### 2.1 GET `/students/me`
