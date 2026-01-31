@@ -11,6 +11,10 @@ class StudentProfile(db.Model):
     last_name = db.Column(db.String(120), nullable=True)
     group_name = db.Column(db.String(120), nullable=True)
 
+    # Система баллов и валюты
+    total_points = db.Column(db.Integer, default=0, nullable=False)  # Баллы (для рейтинга)
+    total_som = db.Column(db.Integer, default=0, nullable=False)     # SOM (валюта для трат)
+
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 

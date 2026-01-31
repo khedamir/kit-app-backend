@@ -124,6 +124,7 @@ Authorization: Bearer <access_token>
   "password": "admin123",
   "full_name": "Иван Иванов",
   "position": "Системный администратор"
+}
 ```
 
 > `full_name` и `position` опциональны
@@ -375,6 +376,63 @@ Authorization: Bearer <access_token>
   ]
 }
 ```
+
+---
+
+### 5.2 GET `/students/me/recommendations`
+
+Получить рекомендации студентов на основе навыков, интересов и ролей.
+
+**Headers:** Bearer access token
+
+**200 OK:**
+
+```json
+{
+  "recommendations_by_interests": [
+    {
+      "student_id": 2,
+      "user_id": 2,
+      "email": "student2@kit.local",
+      "first_name": "Иван",
+      "last_name": "Иванов",
+      "group_name": "ИС-11",
+      "common_interests_count": 3,
+      "common_interests": ["Frontend-разработка", "Дизайн", "AI"],
+      "match_type": "interests"
+    }
+  ],
+  "recommendations_by_roles": [
+    {
+      "student_id": 3,
+      "user_id": 3,
+      "email": "student3@kit.local",
+      "first_name": "Петр",
+      "last_name": "Петров",
+      "group_name": "ИС-12",
+      "roles_count": 2,
+      "roles": [
+        {"id": 2, "code": "backend", "name": "Backend-разработчик"},
+        {"id": 3, "code": "designer", "name": "Дизайнер"}
+      ],
+      "match_type": "roles"
+    }
+  ]
+}
+```
+
+**Описание:**
+
+- `recommendations_by_interests` — студенты с общими интересами (сортировка по количеству общих интересов)
+- `recommendations_by_roles` — студенты с дополняющими ролями (роли, которых нет у текущего студента)
+
+**Ошибки:**
+
+| Код | Описание                     |
+| --- | ---------------------------- |
+| 403 | Роль пользователя не student |
+| 404 | User не найден               |
+| 500 | Ошибка при генерации рекомендаций |
 
 ---
 

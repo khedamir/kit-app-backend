@@ -9,3 +9,5 @@ from .student_questionnaire import StudentSkill, StudentInterest, StudentRole
 from .roles import Role
 
 from .forum import ForumTopic, ForumMessage
+
+from .points import PointCategory, PointTransaction
