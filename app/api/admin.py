@@ -579,3 +579,220 @@ def get_student_points_history(student_id: int):
         }
     }, 200
 
+
+# ==================== СПРАВОЧНИКИ (навыки, интересы, роли) ====================
+
+@admins_bp.get("/admins/reference/skill-categories")
+@jwt_required()
+def get_admin_skill_categories():
+    """Список категорий навыков."""
+    _, error = require_admin()
+    if error:
+        return error
+    items = db.session.execute(
+        db.select(SkillCategory).order_by(SkillCategory.name.asc())
+    ).scalars().all()
+    return [{"id": c.id, "name": c.name} for c in items], 200
+
+
+@admins_bp.post("/admins/reference/skill-categories")
+@jwt_required()
+def create_skill_category():
+    """Создать категорию навыков."""
+    _, error = require_admin()
+    if error:
+        return error
+    data = request.get_json(silent=True) or {}
+    name = (data.get("name") or "").strip()
+    if not name:
+        return {"message": "name is required"}, 400
+    existing = db.session.execute(
+        db.select(SkillCategory).where(SkillCategory.name == name)
+    ).scalar_one_or_none()
+    if existing:
+        return {"message": "category with this name already exists"}, 400
+    cat = SkillCategory(name=name)
+    db.session.add(cat)
+    db.session.commit()
+    return {"id": cat.id, "name": cat.name}, 201
+
+
+@admins_bp.delete("/admins/reference/skill-categories/<int:category_id>")
+@jwt_required()
+def delete_skill_category(category_id: int):
+    """Удалить категорию навыков (если нет навыков в ней)."""
+    _, error = require_admin()
+    if error:
+        return error
+    cat = db.session.get(SkillCategory, category_id)
+    if not cat:
+        return {"message": "category not found"}, 404
+    if cat.skills:
+        return {"message": "cannot delete category with skills, remove skills first"}, 400
+    db.session.delete(cat)
+    db.session.commit()
+    return "", 204
+
+
+@admins_bp.get("/admins/reference/skills")
+@jwt_required()
+def get_admin_skills():
+    """Список навыков (все или по категории)."""
+    _, error = require_admin()
+    if error:
+        return error
+    category_id = request.args.get("category_id", type=int)
+    query = db.select(Skill).order_by(Skill.name.asc())
+    if category_id:
+        query = query.where(Skill.category_id == category_id)
+    skills = db.session.execute(query).scalars().all()
+    return [
+        {"id": s.id, "name": s.name, "category": {"id": s.category.id, "name": s.category.name}}
+        for s in skills
+    ], 200
+
+
+@admins_bp.post("/admins/reference/skills")
+@jwt_required()
+def create_skill():
+    """Создать навык."""
+    _, error = require_admin()
+    if error:
+        return error
+    data = request.get_json(silent=True) or {}
+    name = (data.get("name") or "").strip()
+    category_id = data.get("category_id")
+    if not name:
+        return {"message": "name is required"}, 400
+    if category_id is None:
+        return {"message": "category_id is required"}, 400
+    cat = db.session.get(SkillCategory, category_id)
+    if not cat:
+        return {"message": "category not found"}, 404
+    existing = db.session.execute(
+        db.select(Skill).where(Skill.name == name)
+    ).scalar_one_or_none()
+    if existing:
+        return {"message": "skill with this name already exists"}, 400
+    skill = Skill(name=name, category_id=category_id)
+    db.session.add(skill)
+    db.session.commit()
+    return {"id": skill.id, "name": skill.name, "category": {"id": cat.id, "name": cat.name}}, 201
+
+
+@admins_bp.delete("/admins/reference/skills/<int:skill_id>")
+@jwt_required()
+def delete_skill(skill_id: int):
+    """Удалить навык."""
+    _, error = require_admin()
+    if error:
+        return error
+    skill = db.session.get(Skill, skill_id)
+    if not skill:
+        return {"message": "skill not found"}, 404
+    db.session.delete(skill)
+    db.session.commit()
+    return "", 204
+
+
+@admins_bp.get("/admins/reference/interests")
+@jwt_required()
+def get_admin_interests():
+    """Список интересов."""
+    _, error = require_admin()
+    if error:
+        return error
+    items = db.session.execute(
+        db.select(Interest).order_by(Interest.name.asc())
+    ).scalars().all()
+    return [{"id": i.id, "name": i.name} for i in items], 200
+
+
+@admins_bp.post("/admins/reference/interests")
+@jwt_required()
+def create_interest():
+    """Создать интерес."""
+    _, error = require_admin()
+    if error:
+        return error
+    data = request.get_json(silent=True) or {}
+    name = (data.get("name") or "").strip()
+    if not name:
+        return {"message": "name is required"}, 400
+    existing = db.session.execute(
+        db.select(Interest).where(Interest.name == name)
+    ).scalar_one_or_none()
+    if existing:
+        return {"message": "interest with this name already exists"}, 400
+    interest = Interest(name=name)
+    db.session.add(interest)
+    db.session.commit()
+    return {"id": interest.id, "name": interest.name}, 201
+
+
+@admins_bp.delete("/admins/reference/interests/<int:interest_id>")
+@jwt_required()
+def delete_interest(interest_id: int):
+    """Удалить интерес."""
+    _, error = require_admin()
+    if error:
+        return error
+    interest = db.session.get(Interest, interest_id)
+    if not interest:
+        return {"message": "interest not found"}, 404
+    db.session.delete(interest)
+    db.session.commit()
+    return "", 204
+
+
+@admins_bp.get("/admins/reference/roles")
+@jwt_required()
+def get_admin_roles():
+    """Список ролей."""
+    _, error = require_admin()
+    if error:
+        return error
+    items = db.session.execute(
+        db.select(Role).order_by(Role.name.asc())
+    ).scalars().all()
+    return [{"id": r.id, "code": r.code, "name": r.name} for r in items], 200
+
+
+@admins_bp.post("/admins/reference/roles")
+@jwt_required()
+def create_role():
+    """Создать роль."""
+    _, error = require_admin()
+    if error:
+        return error
+    data = request.get_json(silent=True) or {}
+    code = (data.get("code") or "").strip()
+    name = (data.get("name") or "").strip()
+    if not code:
+        return {"message": "code is required"}, 400
+    if not name:
+        return {"message": "name is required"}, 400
+    existing = db.session.execute(
+        db.select(Role).where(Role.code == code)
+    ).scalar_one_or_none()
+    if existing:
+        return {"message": "role with this code already exists"}, 400
+    role = Role(code=code, name=name)
+    db.session.add(role)
+    db.session.commit()
+    return {"id": role.id, "code": role.code, "name": role.name}, 201
+
+
+@admins_bp.delete("/admins/reference/roles/<int:role_id>")
+@jwt_required()
+def delete_role(role_id: int):
+    """Удалить роль."""
+    _, error = require_admin()
+    if error:
+        return error
+    role = db.session.get(Role, role_id)
+    if not role:
+        return {"message": "role not found"}, 404
+    db.session.delete(role)
+    db.session.commit()
+    return "", 204
