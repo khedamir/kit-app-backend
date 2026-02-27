@@ -29,6 +29,17 @@ def require_admin():
     return user, None
 
 
+def is_primary_admin(user: User) -> bool:
+    """Определяет, является ли админ первым (основным) администратором."""
+    first_admin = (
+        db.session.query(User)
+        .filter(User.role == "admin")
+        .order_by(User.created_at.asc())
+        .first()
+    )
+    return bool(first_admin and first_admin.id == user.id)
+
+
 @admins_bp.get("/admins/me")
 @jwt_required()
 def get_me():
@@ -96,9 +107,13 @@ def get_admin_users():
       - is_active
       - created_at
     """
-    _, error = require_admin()
+    current_admin, error = require_admin()
     if error:
         return error
+
+    # Только основной админ может управлять списком администраторов
+    if not is_primary_admin(current_admin):
+        return {"message": "only primary admin can manage admins"}, 403
 
     results = (
         db.session.query(User, AdminProfile)
@@ -134,6 +149,10 @@ def delete_admin_user(user_id: int):
     current_admin, error = require_admin()
     if error:
         return error
+
+    # Только основной админ может удалять других администраторов
+    if not is_primary_admin(current_admin):
+        return {"message": "only primary admin can delete admins"}, 403
 
     user = db.session.get(User, user_id)
     if not user:
