@@ -82,6 +82,88 @@ def patch_me():
     }, 200
 
 
+@admins_bp.get("/admins/users")
+@jwt_required()
+def get_admin_users():
+    """
+    Получить список всех администраторов.
+    
+    Возвращает:
+      - id
+      - email
+      - full_name
+      - position
+      - is_active
+      - created_at
+    """
+    _, error = require_admin()
+    if error:
+        return error
+
+    results = (
+        db.session.query(User, AdminProfile)
+        .outerjoin(AdminProfile, AdminProfile.user_id == User.id)
+        .filter(User.role == "admin", User.is_active == True)
+        .order_by(User.created_at.asc())
+        .all()
+    )
+
+    admins = []
+    for user, profile in results:
+        admins.append(
+            {
+                "id": user.id,
+                "email": user.email,
+                "full_name": profile.full_name if profile else None,
+                "position": profile.position if profile else None,
+                "is_active": user.is_active,
+                "created_at": user.created_at.isoformat() if user.created_at else None,
+            }
+        )
+
+    return admins, 200
+
+
+@admins_bp.delete("/admins/users/<int:user_id>")
+@jwt_required()
+def delete_admin_user(user_id: int):
+    """
+    Деактивировать администратора (is_active = False).
+    Нельзя удалить последнего активного администратора.
+    """
+    current_admin, error = require_admin()
+    if error:
+        return error
+
+    user = db.session.get(User, user_id)
+    if not user:
+        return {"message": "user not found"}, 404
+
+    if user.role != "admin":
+        return {"message": "only admin users can be deleted via this endpoint"}, 400
+
+    # Нельзя удалить последнего активного администратора
+    active_admins_count = (
+        db.session.query(User)
+        .filter(User.role == "admin", User.is_active == True)
+        .count()
+    )
+    if user.is_active and active_admins_count <= 1:
+        return {"message": "нельзя удалить единственного активного администратора"}, 400
+
+    # Удаляем профиль администратора, если он есть
+    profile = user.admin_profile
+    if profile:
+        db.session.delete(profile)
+
+    # Помечаем администратора как неактивного, чтобы он не мог авторизоваться,
+    # но его ID сохранялся для форумных сообщений.
+    user.is_active = False
+    db.session.commit()
+
+    return "", 204
+
+
 # ==================== УПРАВЛЕНИЕ СТУДЕНТАМИ ====================
 
 @admins_bp.get("/admins/students")
