@@ -11,6 +11,7 @@ from ..models.skills import Skill, SkillCategory
 from ..models.roles import Role
 from ..models.interests import Interest
 from ..models.points import PointCategory, PointTransaction
+from ..models.forum import ForumTopic, ForumMessage
 
 admins_bp = Blueprint("admins", __name__)
 
@@ -290,6 +291,63 @@ def get_students():
             "has_prev": page > 1,
         }
     }, 200
+
+
+@admins_bp.delete("/admins/students/<int:user_id>")
+@jwt_required()
+def delete_student(user_id: int):
+    """
+    "Удалить" студента и связанные с ним данные, оставив его активность на форуме.
+
+    Фактически выполняется мягкое удаление:
+      - пользователь помечается как неактивный (is_active = False)
+      - удаляется профиль студента (StudentProfile)
+      - удаляются ответы анкеты (StudentSkill, StudentInterest, StudentRole)
+      - удаляются транзакции баллов (PointTransaction)
+
+    Форумные темы и сообщения остаются, но в API они будут отображаться как
+    созданные пользователем "Удаленный аккаунт".
+    """
+    _, error = require_admin()
+    if error:
+        return error
+
+    user = db.session.get(User, user_id)
+    if not user:
+        return {"message": "user not found"}, 404
+
+    if user.role != "student":
+        return {"message": "only student users can be deleted via this endpoint"}, 400
+
+    profile = user.student_profile
+
+    if profile:
+        # Удаляем связанные записи анкеты
+        db.session.query(StudentSkill).filter(
+            StudentSkill.student_id == profile.id
+        ).delete(synchronize_session=False)
+        db.session.query(StudentInterest).filter(
+            StudentInterest.student_id == profile.id
+        ).delete(synchronize_session=False)
+        db.session.query(StudentRole).filter(
+            StudentRole.student_id == profile.id
+        ).delete(synchronize_session=False)
+
+        # Удаляем транзакции баллов
+        db.session.query(PointTransaction).filter(
+            PointTransaction.student_id == profile.id
+        ).delete(synchronize_session=False)
+
+        # Удаляем профиль студента
+        db.session.delete(profile)
+
+    # Помечаем пользователя как удалённого, чтобы он не мог авторизоваться
+    # и не появлялся в списке студентов, но его ID оставался для форума.
+    user.is_active = False
+
+    db.session.commit()
+
+    return "", 204
 
 
 @admins_bp.get("/admins/students/groups")

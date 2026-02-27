@@ -41,17 +41,29 @@ class ForumTopic(db.Model):
             "updated_at": self.updated_at.isoformat() + "Z",  # UTC
         }
         if include_author:
-            data["author"] = {
-                "id": self.author.id,
-                "email": self.author.email,
-                "role": self.author.role,
-            }
-            # Добавим имя автора если есть профиль
-            if self.author.role == "student" and self.author.student_profile:
-                profile = self.author.student_profile
-                data["author"]["name"] = f"{profile.first_name or ''} {profile.last_name or ''}".strip() or None
-            elif self.author.role == "admin" and self.author.admin_profile:
-                data["author"]["name"] = self.author.admin_profile.full_name
+            author = self.author
+            # Если пользователь удалён или отсутствует — показываем "Удаленный аккаунт"
+            if not author or not author.is_active:
+                data["author"] = {
+                    "id": None,
+                    "email": "Удаленный аккаунт",
+                    "role": None,
+                    "name": "Удаленный аккаунт",
+                }
+            else:
+                data["author"] = {
+                    "id": author.id,
+                    "email": author.email,
+                    "role": author.role,
+                }
+                # Добавим имя автора если есть профиль
+                if author.role == "student" and author.student_profile:
+                    profile = author.student_profile
+                    data["author"]["name"] = (
+                        f"{profile.first_name or ''} {profile.last_name or ''}"
+                    ).strip() or None
+                elif author.role == "admin" and author.admin_profile:
+                    data["author"]["name"] = author.admin_profile.full_name
         return data
 
 
@@ -89,20 +101,35 @@ class ForumMessage(db.Model):
             "updated_at": self.updated_at.isoformat() + "Z",  # UTC
         }
         if include_author:
-            data["author"] = {
-                "id": self.author.id,
-                "email": self.author.email,
-                "role": self.author.role,
-            }
-            # Добавим имя автора если есть профиль
-            if self.author.role == "student" and self.author.student_profile:
-                profile = self.author.student_profile
-                data["author"]["name"] = f"{profile.first_name or ''} {profile.last_name or ''}".strip() or None
-            elif self.author.role == "admin" and self.author.admin_profile:
-                data["author"]["name"] = self.author.admin_profile.full_name
+            author = self.author
+            # Если пользователь удалён или отсутствует — показываем "Удаленный аккаунт"
+            if not author or not author.is_active:
+                data["author"] = {
+                    "id": None,
+                    "email": "Удаленный аккаунт",
+                    "role": None,
+                    "name": "Удаленный аккаунт",
+                }
+            else:
+                data["author"] = {
+                    "id": author.id,
+                    "email": author.email,
+                    "role": author.role,
+                }
+                # Добавим имя автора если есть профиль
+                if author.role == "student" and author.student_profile:
+                    profile = author.student_profile
+                    data["author"]["name"] = (
+                        f"{profile.first_name or ''} {profile.last_name or ''}"
+                    ).strip() or None
+                elif author.role == "admin" and author.admin_profile:
+                    data["author"]["name"] = author.admin_profile.full_name
         
         if include_replies and self.replies:
-            data["replies"] = [reply.to_dict(include_author=True, include_replies=False) for reply in self.replies]
+            data["replies"] = [
+                reply.to_dict(include_author=True, include_replies=False)
+                for reply in self.replies
+            ]
         
         return data
 

@@ -33,7 +33,17 @@ def register():
     # Проверяем, не занят ли email
     existing = User.query.filter_by(email=email).first()
     if existing:
-        return {"message": "email already registered"}, 409
+        # Активный пользователь с таким email уже есть
+        if existing.is_active:
+            return {
+                "message": "Пользователь с таким email уже зарегистрирован",
+                "code": "EMAIL_EXISTS",
+            }, 409
+        # Пользователь был «удалён» (is_active = False)
+        return {
+            "message": "Аккаунт с этим email был удалён. Обратитесь к администратору для восстановления.",
+            "code": "ACCOUNT_DELETED",
+        }, 409
 
     # Создаём пользователя
     user = User(

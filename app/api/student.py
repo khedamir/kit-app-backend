@@ -4,11 +4,11 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 from ..extensions import db
 from ..models.user import User
 from ..models.student import StudentProfile
-
 from ..models.student_questionnaire import StudentSkill, StudentInterest, StudentRole
 from ..models.skills import Skill
 from ..models.interests import Interest
 from ..models.roles import Role
+from ..models.points import PointTransaction
 from ..services.recommendations_service import get_student_recommendations
 
 
@@ -42,6 +42,60 @@ def get_me():
         "last_name": profile.last_name,
         "group_name": profile.group_name,
     }, 200
+
+
+@students_bp.delete("/students/me")
+@jwt_required()
+def delete_me():
+    """
+    Мягкое удаление аккаунта студента самим студентом.
+
+    Делает:
+      - помечает пользователя как неактивного (user.is_active = False)
+      - удаляет профиль студента (StudentProfile)
+      - удаляет ответы анкеты (StudentSkill, StudentInterest, StudentRole)
+      - удаляет транзакции баллов (PointTransaction)
+
+    Не трогает:
+      - форумные темы и сообщения (они останутся с автором \"Удаленный аккаунт\").
+    """
+    user_id = int(get_jwt_identity())
+    user = db.session.get(User, user_id)
+
+    if not user:
+        return {"message": "user not found"}, 404
+
+    if user.role != "student":
+        return {"message": "only student can access this endpoint"}, 403
+
+    profile = user.student_profile
+
+    if profile:
+        # Удаляем записи анкеты
+        db.session.query(StudentSkill).filter(
+            StudentSkill.student_id == profile.id
+        ).delete(synchronize_session=False)
+        db.session.query(StudentInterest).filter(
+            StudentInterest.student_id == profile.id
+        ).delete(synchronize_session=False)
+        db.session.query(StudentRole).filter(
+            StudentRole.student_id == profile.id
+        ).delete(synchronize_session=False)
+
+        # Удаляем транзакции баллов
+        db.session.query(PointTransaction).filter(
+            PointTransaction.student_id == profile.id
+        ).delete(synchronize_session=False)
+
+        # Удаляем профиль
+        db.session.delete(profile)
+
+    # Помечаем пользователя как удалённого
+    user.is_active = False
+
+    db.session.commit()
+
+    return {"message": "account deleted"}, 200
 
 
 @students_bp.patch("/students/me")
