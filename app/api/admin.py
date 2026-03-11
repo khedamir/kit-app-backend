@@ -377,6 +377,7 @@ def get_students():
             "roles_count": roles_count,
             "total_points": profile.total_points if profile else 0,
             "total_som": profile.total_som if profile else 0,
+            "is_verified": bool(profile.student_workflow_id) if profile else False,
         })
 
     total_pages = (total + per_page - 1) // per_page if total > 0 else 0

@@ -10,6 +10,11 @@ from ..models.interests import Interest
 from ..models.roles import Role
 from ..models.points import PointTransaction
 from ..services.recommendations_service import get_student_recommendations
+from ..services.journal_service import (
+    confirm_student_in_journal,
+    StudentNotFound,
+    MultipleStudentsFound,
+)
 
 
 students_bp = Blueprint("students", __name__)
@@ -40,7 +45,10 @@ def get_me():
         "email": user.email,
         "first_name": profile.first_name,
         "last_name": profile.last_name,
+        "middle_name": profile.middle_name,
         "group_name": profile.group_name,
+        "birthday": profile.birthday.isoformat() if profile.birthday else None,
+        "is_verified": bool(profile.student_workflow_id),
     }, 200
 
 
@@ -117,10 +125,155 @@ def patch_me():
 
     data = request.get_json(silent=True) or {}
 
-    allowed_fields = {"first_name", "last_name", "group_name"}
-    for k, v in data.items():
-        if k in allowed_fields:
-            setattr(profile, k, v)
+    # Для изменения ФИО/группы требуется повторная верификация в журнале
+    last_name = (data.get("last_name") or "").strip()
+    first_name = (data.get("first_name") or "").strip()
+    middle_name = (data.get("middle_name") or "").strip() or None
+    # На фронте поле называется group_name, поэтому поддерживаем оба варианта
+    group_code = (data.get("group_code") or data.get("group_name") or "").strip()
+    birthday = (data.get("birthday") or "").strip() or None
+
+    # Если пришли поля для журнала — пытаемся подтвердить
+    if any([last_name, first_name, group_code, middle_name, birthday]):
+        try:
+            student_workflow_id = confirm_student_in_journal(
+                last_name=last_name,
+                first_name=first_name,
+                middle_name=middle_name,
+                group_code=group_code,
+                birthday=birthday,
+            )
+        except ValueError as e:
+            return {
+                "message": str(e),
+                "code": "STUDENT_CONFIRMATION_INVALID_DATA",
+            }, 400
+        except StudentNotFound:
+            return {
+                "message": "Студент не найден в сетевом журнале",
+                "code": "STUDENT_NOT_FOUND",
+            }, 404
+        except MultipleStudentsFound:
+            return {
+                "message": "Найдено несколько студентов, укажите дату рождения",
+                "code": "MULTIPLE_STUDENTS",
+            }, 409
+        except Exception:
+            return {
+                "message": "Ошибка при обращении к базе сетевого журнала",
+                "code": "JOURNAL_DB_ERROR",
+            }, 500
+
+        # Верификация прошла — обновляем профиль и связь
+        from datetime import date
+
+        birthday_date = None
+        if birthday:
+            try:
+                birthday_date = date.fromisoformat(birthday)
+            except ValueError:
+                birthday_date = None
+
+        profile.first_name = first_name or profile.first_name
+        profile.last_name = last_name or profile.last_name
+        profile.middle_name = middle_name or profile.middle_name
+        profile.group_name = group_code or profile.group_name
+        profile.birthday = birthday_date or profile.birthday
+        profile.student_workflow_id = student_workflow_id
+    else:
+        # Если не переданы данные для журнала — не даём менять профиль
+        return {
+            "message": "Для изменения профиля необходимо подтвердить данные студента в сетевом журнале",
+            "code": "STUDENT_CONFIRMATION_REQUIRED",
+        }, 400
+
+    db.session.commit()
+
+    return {
+        "id": profile.id,
+        "user_id": user.id,
+        "email": user.email,
+        "first_name": profile.first_name,
+        "last_name": profile.last_name,
+        "middle_name": profile.middle_name,
+        "group_name": profile.group_name,
+        "birthday": profile.birthday.isoformat() if profile.birthday else None,
+        "student_workflow_id": profile.student_workflow_id,
+    }, 200
+
+
+@students_bp.post("/students/me/confirm-journal")
+@jwt_required()
+def confirm_me_in_journal():
+    """
+    Подтверждение уже зарегистрированного студента через локальную БД сетевого журнала.
+
+    Body:
+    {
+        "last_name": "...",
+        "first_name": "...",
+        "middle_name": "...",      # опционально
+        "group_code": "...",
+        "birthday": "YYYY-MM-DD"   # опционально
+    }
+    """
+    user_id = int(get_jwt_identity())
+    user = db.session.get(User, user_id)
+
+    if not user:
+        return {"message": "user not found"}, 404
+
+    if user.role != "student":
+        return {"message": "only student can access this endpoint"}, 403
+
+    profile = user.student_profile
+    if not profile:
+        profile = StudentProfile(user_id=user.id)
+        db.session.add(profile)
+
+    data = request.get_json(silent=True) or {}
+
+    last_name = (data.get("last_name") or "").strip()
+    first_name = (data.get("first_name") or "").strip()
+    middle_name = (data.get("middle_name") or "").strip() or None
+    group_code = (data.get("group_code") or "").strip()
+    birthday = (data.get("birthday") or "").strip() or None
+
+    try:
+        student_workflow_id = confirm_student_in_journal(
+            last_name=last_name,
+            first_name=first_name,
+            middle_name=middle_name,
+            group_code=group_code,
+            birthday=birthday,
+        )
+    except ValueError as e:
+        return {
+            "message": str(e),
+            "code": "STUDENT_CONFIRMATION_INVALID_DATA",
+        }, 400
+    except StudentNotFound:
+        return {
+            "message": "Студент не найден в сетевом журнале",
+            "code": "STUDENT_NOT_FOUND",
+        }, 404
+    except MultipleStudentsFound:
+        return {
+            "message": "Найдено несколько студентов, укажите дату рождения",
+            "code": "MULTIPLE_STUDENTS",
+        }, 409
+    except Exception:
+        return {
+            "message": "Ошибка при обращении к базе сетевого журнала",
+            "code": "JOURNAL_DB_ERROR",
+        }, 500
+
+    # Сохраняем связь
+    profile.student_workflow_id = student_workflow_id
+    # Обновляем основные поля профиля (по желанию можно не обновлять)
+    profile.first_name = first_name or profile.first_name
+    profile.last_name = last_name or profile.last_name
+    profile.group_name = group_code or profile.group_name
 
     db.session.commit()
 
@@ -131,6 +284,8 @@ def patch_me():
         "first_name": profile.first_name,
         "last_name": profile.last_name,
         "group_name": profile.group_name,
+        "student_workflow_id": profile.student_workflow_id,
+        "is_verified": bool(profile.student_workflow_id),
     }, 200
 
 
@@ -344,9 +499,12 @@ def get_skill_map():
             "email": user.email,
             "first_name": profile.first_name,
             "last_name": profile.last_name,
+            "middle_name": profile.middle_name,
             "group_name": profile.group_name,
+            "birthday": profile.birthday.isoformat() if profile.birthday else None,
             "total_points": profile.total_points or 0,
             "total_som": profile.total_som or 0,
+            "is_verified": bool(profile.student_workflow_id),
         },
         "interests": interests_payload,
         "roles": roles_payload,
@@ -543,7 +701,9 @@ def get_student_by_id(student_id: int):
             "email": student_user.email,
             "first_name": profile.first_name,
             "last_name": profile.last_name,
+            "middle_name": profile.middle_name,
             "group_name": profile.group_name,
+            "birthday": profile.birthday.isoformat() if profile.birthday else None,
         },
         "interests": interests_payload,
         "roles": roles_payload,

@@ -9,6 +9,11 @@ from ..models.user import User
 from ..models.student import StudentProfile
 from ..models.admin import AdminProfile
 from ..services.auth_service import authenticate
+from ..services.journal_service import (
+    confirm_student_in_journal,
+    StudentNotFound,
+    MultipleStudentsFound,
+)
 from ..utils.security import hash_password
 
 auth_bp = Blueprint("auth", __name__)
@@ -17,18 +22,65 @@ auth_bp = Blueprint("auth", __name__)
 @auth_bp.post("/auth/register")
 def register():
     """
-    Простая регистрация нового пользователя (студента).
-    Body: { "email": "...", "password": "..." }
+    Регистрация студента с обязательным подтверждением в сетевом журнале.
+
+    Ожидает тело:
+    {
+        "email": "...",
+        "password": "...",
+        "last_name": "...",
+        "first_name": "...",
+        "middle_name": "...",      # опционально
+        "group_code": "...",
+        "birthday": "YYYY-MM-DD"   # опционально
+    }
     """
     data = request.get_json(silent=True) or {}
     email = (data.get("email") or "").strip().lower()
     password = data.get("password") or ""
+
+    last_name = (data.get("last_name") or "").strip()
+    first_name = (data.get("first_name") or "").strip()
+    middle_name = (data.get("middle_name") or "").strip() or None
+    group_code = (data.get("group_code") or "").strip()
+    birthday = (data.get("birthday") or "").strip() or None
 
     if not email or not password:
         return {"message": "email and password are required"}, 400
 
     if len(password) < 6:
         return {"message": "password must be at least 6 characters"}, 400
+
+    # Подтверждение студента в локальной БД сетевого журнала
+    try:
+        student_workflow_id = confirm_student_in_journal(
+            last_name=last_name,
+            first_name=first_name,
+            middle_name=middle_name,
+            group_code=group_code,
+            birthday=birthday,
+        )
+    except ValueError as e:
+        return {
+            "message": str(e),
+            "code": "STUDENT_CONFIRMATION_INVALID_DATA",
+        }, 400
+    except StudentNotFound:
+        return {
+            "message": "Студент не найден в сетевом журнале",
+            "code": "STUDENT_NOT_FOUND",
+        }, 404
+    except MultipleStudentsFound:
+        return {
+            "message": "Найдено несколько студентов, укажите дату рождения",
+            "code": "MULTIPLE_STUDENTS",
+        }, 409
+    except Exception:
+        # В production можно логировать подробности
+        return {
+            "message": "Ошибка при обращении к базе сетевого журнала",
+            "code": "JOURNAL_DB_ERROR",
+        }, 500
 
     # Проверяем, не занят ли email
     existing = User.query.filter_by(email=email).first()
@@ -49,13 +101,30 @@ def register():
     user = User(
         email=email,
         password_hash=hash_password(password),
-        role="student"
+        role="student",
     )
     db.session.add(user)
     db.session.flush()  # Получаем user.id
 
-    # Создаём профиль студента
-    profile = StudentProfile(user_id=user.id)
+    # Создаём профиль студента и сохраняем связь с сетевым журналом
+    from datetime import date
+
+    birthday_date = None
+    if birthday:
+        try:
+            birthday_date = date.fromisoformat(birthday)
+        except ValueError:
+            birthday_date = None
+
+    profile = StudentProfile(
+        user_id=user.id,
+        first_name=first_name or None,
+        last_name=last_name or None,
+        middle_name=middle_name or None,
+        group_name=group_code or None,
+        birthday=birthday_date,
+        student_workflow_id=student_workflow_id,
+    )
     db.session.add(profile)
     db.session.commit()
 
@@ -67,7 +136,7 @@ def register():
         "message": "registered successfully",
         "access_token": access,
         "refresh_token": refresh,
-        "user": {"id": user.id, "email": user.email, "role": user.role}
+        "user": {"id": user.id, "email": user.email, "role": user.role},
     }, 201
 
 

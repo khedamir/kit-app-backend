@@ -7,9 +7,15 @@ class StudentProfile(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False)
 
+    # Связь с сетевым журналом (SQL Server)
+    # Id из таблицы StudentWorkFlow
+    student_workflow_id = db.Column(db.Integer, unique=True, nullable=True)
+
     first_name = db.Column(db.String(120), nullable=True)
     last_name = db.Column(db.String(120), nullable=True)
+    middle_name = db.Column(db.String(120), nullable=True)
     group_name = db.Column(db.String(120), nullable=True)
+    birthday = db.Column(db.Date, nullable=True)
 
     # Система баллов и валюты
     total_points = db.Column(db.Integer, default=0, nullable=False)  # Баллы (для рейтинга)

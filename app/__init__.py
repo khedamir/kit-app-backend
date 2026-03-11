@@ -15,13 +15,16 @@ def create_app():
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
     app.config["JWT_SECRET_KEY"] = os.getenv("JWT_SECRET_KEY", "dev-jwt-secret")
 
-    cors.init_app(app, resources={
-        r"/api/*": {
-            "origins": "*",
-            "methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-            "allow_headers": ["Content-Type", "Authorization"],
-        }
-    })
+    cors.init_app(
+        app,
+        resources={
+            r"/*": {
+                "origins": ["http://localhost:5173", "http://127.0.0.1:5173"],
+                "methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+                "allow_headers": ["Content-Type", "Authorization"],
+            }
+        },
+    )
 
     db.init_app(app)
     migrate.init_app(app, db)
