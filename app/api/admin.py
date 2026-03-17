@@ -1,6 +1,7 @@
 from flask import Blueprint, request
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from sqlalchemy import or_, func
+from datetime import date
 
 from ..extensions import db
 from ..models.user import User
@@ -12,6 +13,7 @@ from ..models.roles import Role
 from ..models.interests import Interest
 from ..models.points import PointCategory, PointTransaction
 from ..models.forum import ForumTopic, ForumMessage
+from ..models.journal_points import JournalProcessedMark
 
 admins_bp = Blueprint("admins", __name__)
 
@@ -583,12 +585,124 @@ def get_point_categories():
     }, 200
 
 
+@admins_bp.post("/admins/points/categories")
+@jwt_required()
+def create_point_category():
+    """
+    Создать новую категорию начисления/списания баллов.
+
+    Body:
+        - name: str (обязательно)
+        - points: int (обязательно, > 0 для наград, < 0 для штрафов)
+        - is_penalty: bool (опционально, по умолчанию False)
+    """
+    _, error = require_admin()
+    if error:
+        return error
+
+    data = request.get_json(silent=True) or {}
+    name = (data.get("name") or "").strip()
+    if not name:
+        return {"message": "name is required"}, 400
+
+    points = data.get("points")
+    if points is None:
+        return {"message": "points is required"}, 400
+    try:
+        points = int(points)
+    except (TypeError, ValueError):
+        return {"message": "points must be an integer"}, 400
+
+    is_penalty = bool(data.get("is_penalty", False))
+
+    existing = db.session.execute(
+        db.select(PointCategory).where(PointCategory.name == name)
+    ).scalar_one_or_none()
+    if existing:
+        return {"message": "category with this name already exists"}, 400
+
+    category = PointCategory(
+        name=name,
+        points=points,
+        is_penalty=is_penalty,
+        is_custom=False,
+        is_active=True,
+    )
+    db.session.add(category)
+    db.session.commit()
+
+    return {
+        "id": category.id,
+        "name": category.name,
+        "points": category.points,
+        "is_penalty": category.is_penalty,
+        "is_custom": category.is_custom,
+    }, 201
+
+
+@admins_bp.delete("/admins/points/categories/<int:category_id>")
+@jwt_required()
+def delete_point_category(category_id: int):
+    """
+    Деактивировать категорию начисления/списания баллов.
+
+    Фактически помечает категорию как is_active=False,
+    чтобы не ломать историю транзакций.
+    """
+    _, error = require_admin()
+    if error:
+        return error
+
+    category = db.session.get(PointCategory, category_id)
+    if not category:
+        return {"message": "category not found"}, 404
+
+    if category.is_custom:
+        return {"message": "cannot delete custom category"}, 400
+
+    if not category.is_active:
+        return "", 204
+
+    category.is_active = False
+    db.session.commit()
+    return "", 204
+
+
+def _ensure_current_month(profile: StudentProfile):
+    """Проверяем, не начался ли новый месяц для профиля."""
+    today = date.today()
+    month_start = date(today.year, today.month, 1)
+
+    # Если месяц уже выставлен и совпадает, ничего не делаем
+    if profile.current_month_started_at == month_start:
+        return
+
+    # Если ранее уже шёл учёт месяца, при смене месяца переносим баллы в общий счёт
+    if profile.current_month_started_at is not None:
+        month_points = profile.current_month_points or 0
+        if month_points != 0:
+            # Переносим месячные баллы в накопительные
+            profile.total_points = (profile.total_points or 0) + month_points
+            # SOM только с положительных баллов
+            positive_points = max(0, month_points)
+            som_earned = positive_points // 5
+            if som_earned > 0:
+                profile.total_som = (profile.total_som or 0) + som_earned
+
+    # Обнуляем счёт за месяц и обновляем дату начала месяца
+    profile.current_month_points = 0
+    profile.current_month_started_at = month_start
+
+
 @admins_bp.post("/admins/students/<int:student_id>/points")
 @jwt_required()
 def add_student_points(student_id: int):
     """
     Начислить или списать баллы студенту.
     
+    Баллы накапливаются в current_month_points, а в total_points и total_som
+    попадают при смене месяца.
+
     Body:
         - category_id: int (опционально, если is_custom)
         - points: int (только для кастомных начислений, иначе берётся из категории)
@@ -602,6 +716,9 @@ def add_student_points(student_id: int):
     profile = db.session.get(StudentProfile, student_id)
     if not profile:
         return {"message": "student not found"}, 404
+
+    # Актуализируем месяц (переносим прошлый месяц в total_*)
+    _ensure_current_month(profile)
 
     data = request.get_json(silent=True) or {}
     
@@ -631,7 +748,7 @@ def add_student_points(student_id: int):
     else:
         return {"message": "category_id is required"}, 400
 
-    # Вычисляем SOM (5 баллов = 1 SOM, только для положительных)
+    # SOM для транзакции (используется только для истории, общий SOM начисляется при закрытии месяца)
     som_earned = 0
     if points > 0:
         som_earned = points // 5
@@ -642,18 +759,13 @@ def add_student_points(student_id: int):
         category_id=category_id,
         points=points,
         som_earned=som_earned,
-        description=description or category.name,
+        description=description or (category.name if category else ""),
         created_by=admin_user.id,
     )
     db.session.add(transaction)
 
-    # Обновляем баланс студента
-    profile.total_points = (profile.total_points or 0) + points
-    profile.total_som = (profile.total_som or 0) + som_earned
-
-    # Не даём баллам уйти в минус (опционально, можно убрать)
-    if profile.total_points < 0:
-        profile.total_points = 0
+    # Обновляем баланс за текущий месяц
+    profile.current_month_points = (profile.current_month_points or 0) + points
 
     db.session.commit()
 
@@ -670,6 +782,7 @@ def add_student_points(student_id: int):
             "id": profile.id,
             "total_points": profile.total_points,
             "total_som": profile.total_som,
+            "current_month_points": profile.current_month_points,
         }
     }, 200
 
@@ -737,6 +850,47 @@ def get_student_points_history(student_id: int):
             "total_points": profile.total_points,
             "total_som": profile.total_som,
         }
+    }, 200
+
+
+@admins_bp.get("/admins/students/<int:student_id>/journal-points")
+@jwt_required()
+def get_student_journal_points(student_id: int):
+    """
+    Простой просмотр баллов, начисленных автоматически из сетевого журнала.
+    """
+    admin_user, error = require_admin()
+    if error:
+        return error
+
+    profile = db.session.get(StudentProfile, student_id)
+    if not profile:
+        return {"message": "student not found"}, 404
+
+    items = (
+        db.session.query(JournalProcessedMark)
+        .filter(JournalProcessedMark.student_id == profile.id)
+        .order_by(JournalProcessedMark.lesson_date.desc().nullslast())
+        .all()
+    )
+
+    return {
+        "items": [
+            {
+                "id": jm.id,
+                "student_workflow_id": jm.student_workflow_id,
+                "mark_set_id": jm.mark_set_id,
+                "education_task_id": jm.education_task_id,
+                "version": jm.version,
+                "mark_value": jm.mark_value,
+                "points": jm.points,
+                "lesson_date": jm.lesson_date.isoformat() if jm.lesson_date else None,
+                "issued_at": jm.issued_at.isoformat() if jm.issued_at else None,
+                "month_start": jm.month_start.isoformat() if jm.month_start else None,
+                "transaction_id": jm.transaction_id,
+            }
+            for jm in items
+        ]
     }, 200
 
 

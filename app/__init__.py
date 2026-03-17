@@ -4,6 +4,7 @@ import os
 from . import models
 
 from .extensions import db, migrate, jwt, cors
+from .scheduler import init_scheduler
 
 def create_app():
     load_dotenv()
@@ -32,5 +33,8 @@ def create_app():
 
     from .api import api_bp
     app.register_blueprint(api_bp, url_prefix="/api/v1")
+
+    # Планировщик фоновых задач (начисление баллов за оценки и финализация месяцев)
+    init_scheduler(app)
 
     return app

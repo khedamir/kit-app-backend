@@ -1,13 +1,13 @@
-from .user import User 
 from .user import User
-from .student import StudentProfile 
-from .admin import AdminProfile  
+from .student import StudentProfile
+from .admin import AdminProfile
 
 from .skills import Skill, SkillCategory
-from .interests import Interest 
+from .interests import Interest
 from .student_questionnaire import StudentSkill, StudentInterest, StudentRole
 from .roles import Role
 
 from .forum import ForumTopic, ForumMessage
 
 from .points import PointCategory, PointTransaction
+from .journal_points import JournalProcessedMark

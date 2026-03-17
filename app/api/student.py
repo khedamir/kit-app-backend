@@ -504,6 +504,7 @@ def get_skill_map():
             "birthday": profile.birthday.isoformat() if profile.birthday else None,
             "total_points": profile.total_points or 0,
             "total_som": profile.total_som or 0,
+            "current_month_points": profile.current_month_points or 0,
             "is_verified": bool(profile.student_workflow_id),
         },
         "interests": interests_payload,
@@ -574,8 +575,10 @@ def get_students_rating():
     Query params:
         - page: int (default 1)
         - per_page: int (default 20, max 100)
+        - type: "total" | "month" (default "total")
     
-    Возвращает список студентов, отсортированных по total_points (desc).
+    type="total"  - рейтинг по накопительным баллам (total_points).
+    type="month"  - рейтинг по баллам за текущий месяц (current_month_points).
     """
     user_id = int(get_jwt_identity())
     current_user = db.session.get(User, user_id)
@@ -586,14 +589,25 @@ def get_students_rating():
     page = request.args.get("page", 1, type=int)
     per_page = request.args.get("per_page", 20, type=int)
     per_page = min(per_page, 100)
+    rating_type = request.args.get("type", "total")
 
     # Базовый запрос - все активные студенты
     query = (
         db.select(StudentProfile)
         .join(User, User.id == StudentProfile.user_id)
         .where(User.is_active == True)
-        .order_by(StudentProfile.total_points.desc(), StudentProfile.first_name.asc())
     )
+
+    if rating_type == "month":
+        query = query.order_by(
+            StudentProfile.current_month_points.desc(),
+            StudentProfile.first_name.asc()
+        )
+    else:
+        query = query.order_by(
+            StudentProfile.total_points.desc(),
+            StudentProfile.first_name.asc()
+        )
 
     # Подсчёт общего количества
     count_query = (
@@ -623,6 +637,7 @@ def get_students_rating():
             "group_name": profile.group_name,
             "total_points": profile.total_points or 0,
             "total_som": profile.total_som or 0,
+            "current_month_points": profile.current_month_points or 0,
         })
 
     return {

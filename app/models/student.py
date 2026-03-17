@@ -18,8 +18,12 @@ class StudentProfile(db.Model):
     birthday = db.Column(db.Date, nullable=True)
 
     # Система баллов и валюты
-    total_points = db.Column(db.Integer, default=0, nullable=False)  # Баллы (для рейтинга)
+    total_points = db.Column(db.Integer, default=0, nullable=False)  # Накопительные баллы (для общего рейтинга)
     total_som = db.Column(db.Integer, default=0, nullable=False)     # SOM (валюта для трат)
+
+    # Баллы за текущий календарный месяц
+    current_month_points = db.Column(db.Integer, default=0, nullable=False)
+    current_month_started_at = db.Column(db.Date, nullable=True)
 
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
