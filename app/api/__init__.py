@@ -26,3 +26,6 @@ api_bp.register_blueprint(admins_bp)
 
 from .forum import forum_bp  # noqa: E402
 api_bp.register_blueprint(forum_bp)
+
+from .shop import shop_bp  # noqa: E402
+api_bp.register_blueprint(shop_bp)

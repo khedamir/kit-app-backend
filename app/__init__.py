@@ -15,6 +15,11 @@ def create_app():
     app.config["SQLALCHEMY_DATABASE_URI"] = os.getenv("DATABASE_URL")
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
     app.config["JWT_SECRET_KEY"] = os.getenv("JWT_SECRET_KEY", "dev-jwt-secret")
+    app.config["UPLOAD_FOLDER"] = os.getenv(
+        "UPLOAD_FOLDER",
+        os.path.abspath(os.path.join(app.root_path, "..", "uploads")),
+    )
+    os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
 
     cors.init_app(
         app,
