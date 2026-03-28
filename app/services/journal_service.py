@@ -1,5 +1,10 @@
+import logging
 import os
+from datetime import date
+
 import pyodbc
+
+logger = logging.getLogger(__name__)
 
 
 def get_conn():
@@ -21,7 +26,7 @@ def get_conn():
     )
 
     conn = pyodbc.connect(conn_str, timeout=5)
-    print(f"[journal_service] Connected to journal DB {db_name} at {server}")
+    logger.debug("Connected to journal DB %s at %s", db_name, server)
     return conn
 
 
@@ -105,4 +110,69 @@ def confirm_student_in_journal(
 
     student_workflow_id = int(rows[0][0])
     return student_workflow_id
+
+
+def fetch_student_marks_by_lesson_date_range(
+    student_workflow_id: int,
+    from_date: date,
+    to_date: date,
+) -> list[dict]:
+    """
+    Оценки студента за интервал по дате урока (GradebookLesson.Date).
+    from_date включительно, to_date — верхняя граница (исключая), как в localdb.py.
+    """
+    sql = """
+        SELECT
+            swf.Id                       AS StudentWorkFlowId,
+            sewf.Id                      AS StudentEntryWorkFlowId,
+            ms.Id                        AS MarkSetId,
+
+            m.EducationTaskId,
+            m.Version,
+            m.IssuerId,
+            m.Issued,
+            m.Value,
+            m.IsRequired,
+
+            gl.[Date]                    AS LessonDate,
+            gl.[Name]                    AS LessonName,
+            ss.[Name]                    AS SubjectName,
+
+            et.[Topic]                   AS TaskTopic,
+            et.[Type]                    AS TaskType
+        FROM dbo.StudentWorkFlow swf
+        JOIN dbo.StudentEntryWorkFlow sewf
+            ON sewf.StudentWorkFlowId = swf.Id
+
+        JOIN dbo.MarkSet ms
+            ON ms.StudentEntryWorkFlowId = sewf.Id
+
+        JOIN dbo.Mark m
+            ON m.MarkSetId = ms.Id
+
+        JOIN dbo.EducationTask et
+            ON et.Id = m.EducationTaskId
+
+        JOIN dbo.GradebookLesson gl
+            ON gl.Id = et.GradebookLessonId
+
+        JOIN dbo.ScheduleSubject ss
+            ON ss.Id = gl.ScheduleSubjectId
+
+        WHERE swf.Id = ?
+          AND swf.EndId IS NULL
+          AND sewf.EndId IS NULL
+          AND gl.[Date] >= ?
+          AND gl.[Date] <  ?
+
+        ORDER BY gl.[Date] DESC, m.Issued DESC, m.EducationTaskId;
+    """
+    from_s = from_date.isoformat()
+    to_s = to_date.isoformat()
+
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(sql, student_workflow_id, from_s, to_s)
+        cols = [c[0] for c in cur.description]
+        return [dict(zip(cols, row)) for row in cur.fetchall()]
 

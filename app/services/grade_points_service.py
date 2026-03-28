@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import logging
+import os
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
+from decimal import Decimal
 from typing import Iterable, Mapping, Any
 
 import requests
@@ -10,6 +13,9 @@ from ..extensions import db
 from ..models.student import StudentProfile
 from ..models.journal_points import JournalProcessedMark
 from ..models.points import PointTransaction
+from . import journal_service
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -62,7 +68,8 @@ class GradePointsService:
         Возвращает количество новых обработанных оценок.
         """
         from_date = for_date
-        to_date = for_date.replace(day=for_date.day + 1)
+        # Нельзя делать replace(day=day+1): на последнем дне месяца будет ValueError
+        to_date = for_date + timedelta(days=1)
 
         return self._process_range(from_date, to_date)
 
@@ -94,8 +101,14 @@ class GradePointsService:
             .scalars()
             .all()
         )
+        profile_list = list(profiles)
+        if not profile_list:
+            logger.warning(
+                "[grade_points] Нет студентов с заполненным student_workflow_id — "
+                "начисление из журнала пропущено"
+            )
 
-        for profile in profiles:
+        for profile in profile_list:
             student_workflow_id = profile.student_workflow_id
             if not student_workflow_id:
                 continue
@@ -167,44 +180,100 @@ class GradePointsService:
         from_date: date,
         to_date: date,
     ) -> list[JournalMark]:
-        url = f"{self.journal_base_url}/students/{student_workflow_id}/marks/by-date-range"
-        params = {
-            "from": from_date.isoformat(),
-            "to": to_date.isoformat(),
-        }
-        resp = requests.get(url, params=params, timeout=10)
-        resp.raise_for_status()
-        payload = resp.json()
-        items: Iterable[Mapping[str, Any]] = payload.get("items", [])
+        items: list[Mapping[str, Any]] = []
+
+        if os.getenv("JOURNAL_DB_SERVER"):
+            try:
+                items = journal_service.fetch_student_marks_by_lesson_date_range(
+                    student_workflow_id, from_date, to_date
+                )
+            except Exception:
+                logger.exception(
+                    "[grade_points] Ошибка чтения оценок из журнала (pyodbc), "
+                    "student_workflow_id=%s",
+                    student_workflow_id,
+                )
+                return []
+        else:
+            url = f"{self.journal_base_url}/students/{student_workflow_id}/marks/by-date-range"
+            params = {
+                "from": from_date.isoformat(),
+                "to": to_date.isoformat(),
+            }
+            try:
+                resp = requests.get(url, params=params, timeout=30)
+                resp.raise_for_status()
+                payload = resp.json()
+                if isinstance(payload, dict) and payload.get("error"):
+                    logger.error(
+                        "[grade_points] Журнал API вернул ошибку: %s url=%s",
+                        payload.get("error"),
+                        url,
+                    )
+                    return []
+                items = list(payload.get("items", []))
+            except requests.RequestException:
+                logger.exception(
+                    "[grade_points] Не удалось вызвать JOURNAL_API_BASE_URL=%s "
+                    "(убедитесь, что запущен localdb.py на отдельном порту)",
+                    self.journal_base_url,
+                )
+                return []
 
         result: list[JournalMark] = []
         for item in items:
-            try:
-                issued_raw = item.get("Issued")
-                issued_dt = None
-                if issued_raw:
-                    issued_dt = datetime.fromisoformat(str(issued_raw))
-
-                lesson_date_raw = item.get("LessonDate")
-                lesson_dt = None
-                if lesson_date_raw:
-                    lesson_dt = date.fromisoformat(str(lesson_date_raw))
-
-                jm = JournalMark(
-                    student_workflow_id=int(item["StudentWorkFlowId"]),
-                    mark_set_id=int(item["MarkSetId"]),
-                    education_task_id=int(item["EducationTaskId"]),
-                    version=int(item.get("Version", 0)),
-                    value=int(item["Value"]),
-                    issued=issued_dt,
-                    lesson_date=lesson_dt,
-                )
+            jm = self._journal_row_to_mark(item)
+            if jm is not None:
                 result.append(jm)
-            except Exception:
-                # Если какая‑то строка поломана, просто пропускаем её
-                continue
-
         return result
+
+    @staticmethod
+    def _coerce_int(value: Any, default: int = 0) -> int:
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return int(value)
+        if isinstance(value, int):
+            return value
+        if isinstance(value, Decimal):
+            return int(value)
+        if isinstance(value, float):
+            return int(value)
+        return int(value)
+
+    def _journal_row_to_mark(self, item: Mapping[str, Any]) -> JournalMark | None:
+        try:
+            issued_raw = item.get("Issued")
+            issued_dt = None
+            if issued_raw is not None:
+                if isinstance(issued_raw, datetime):
+                    issued_dt = issued_raw
+                else:
+                    issued_dt = datetime.fromisoformat(str(issued_raw).replace("Z", "+00:00"))
+
+            lesson_date_raw = item.get("LessonDate")
+            lesson_dt = None
+            if lesson_date_raw is not None:
+                # datetime — подкласс date, сначала проверяем datetime
+                if isinstance(lesson_date_raw, datetime):
+                    lesson_dt = lesson_date_raw.date()
+                elif isinstance(lesson_date_raw, date):
+                    lesson_dt = lesson_date_raw
+                else:
+                    lesson_dt = date.fromisoformat(str(lesson_date_raw)[:10])
+
+            return JournalMark(
+                student_workflow_id=self._coerce_int(item.get("StudentWorkFlowId")),
+                mark_set_id=self._coerce_int(item.get("MarkSetId")),
+                education_task_id=self._coerce_int(item.get("EducationTaskId")),
+                version=self._coerce_int(item.get("Version"), 0),
+                value=self._coerce_int(item.get("Value")),
+                issued=issued_dt,
+                lesson_date=lesson_dt,
+            )
+        except Exception:
+            logger.warning("[grade_points] Пропуск строки оценки: %r", item, exc_info=True)
+            return None
 
     def _is_mark_already_processed(self, jm: JournalMark) -> bool:
         exists = self.session.execute(
