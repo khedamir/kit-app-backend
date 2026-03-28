@@ -5,10 +5,6 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 from .extensions import db
 from .services.grade_points_service import GradePointsService
-from .services.journal_points_run_log import (
-    append_journal_points_run_log,
-    append_journal_points_run_log_exception,
-)
 
 
 def _get_journal_base_url() -> str:
@@ -29,7 +25,7 @@ def init_scheduler(app):
     """
     Инициализация фонового планировщика задач.
 
-    - Ежедневная задача в 20:00 (временно для теста; обычно 03:00): обработка за вчера.
+    - Ежедневная задача в 03:00: обработка оценок за вчерашний день.
     - Месячная задача в 02:00 первого числа месяца: финализация прошлого месяца.
 
     Часовой пояс: SCHEDULER_TIMEZONE (по умолчанию Europe/Moscow), чтобы «3 ночи»
@@ -38,7 +34,7 @@ def init_scheduler(app):
     tz = os.getenv("SCHEDULER_TIMEZONE", "Europe/Moscow")
     scheduler = BackgroundScheduler(timezone=tz)
 
-    @scheduler.scheduled_job("cron", hour=20, minute=0)
+    @scheduler.scheduled_job("cron", hour=3, minute=0)
     def daily_job():
         with app.app_context():
             yesterday = date.today() - timedelta(days=1)
@@ -50,17 +46,8 @@ def init_scheduler(app):
                     processed,
                     yesterday,
                 )
-                append_journal_points_run_log(
-                    app,
-                    f"daily OK for_date={yesterday.isoformat()} processed={processed}",
-                )
-            except Exception as e:
+            except Exception:
                 app.logger.exception("[scheduler] Daily journal points job failed")
-                append_journal_points_run_log_exception(
-                    app,
-                    f"daily FAIL for_date={yesterday.isoformat()}",
-                    e,
-                )
 
     @scheduler.scheduled_job("cron", day=1, hour=2, minute=0)
     def monthly_finalize_job():
@@ -81,17 +68,8 @@ def init_scheduler(app):
                     prev_year,
                     prev_month,
                 )
-                append_journal_points_run_log(
-                    app,
-                    f"monthly OK year={prev_year} month={prev_month:02d} processed={processed}",
-                )
-            except Exception as e:
+            except Exception:
                 app.logger.exception("[scheduler] Monthly journal finalize job failed")
-                append_journal_points_run_log_exception(
-                    app,
-                    f"monthly FAIL year={prev_year} month={prev_month:02d}",
-                    e,
-                )
 
     scheduler.start()
 
