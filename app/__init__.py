@@ -21,6 +21,9 @@ def create_app():
     )
     os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
 
+    max_upload_mb = int(os.getenv("MAX_UPLOAD_MB", "20"))
+    app.config["MAX_CONTENT_LENGTH"] = max(1, max_upload_mb) * 1024 * 1024
+
     cors.init_app(
         app,
         resources={

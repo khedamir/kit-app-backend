@@ -4,6 +4,7 @@ import os
 
 from flask import Blueprint, request, current_app, send_from_directory
 from flask_jwt_extended import jwt_required, get_jwt_identity
+from sqlalchemy import func
 from werkzeug.utils import secure_filename
 
 from ..extensions import db
@@ -99,6 +100,25 @@ def _save_uploaded_photos(files) -> list[str]:
         saved_urls.append(f"{SHOP_PHOTO_PATH_PREFIX}{new_name}")
 
     return saved_urls
+
+
+def _remove_disk_files_for_item(item: ShopItem) -> None:
+    upload_folder = current_app.config.get("UPLOAD_FOLDER")
+    if not upload_folder:
+        return
+    upload_folder = os.path.abspath(upload_folder)
+    for url in item.photos or []:
+        if not isinstance(url, str) or not url.startswith(SHOP_PHOTO_PATH_PREFIX):
+            continue
+        safe_name = os.path.basename(url.replace("\\", "/"))
+        if not safe_name or safe_name != url.replace("\\", "/").strip("/"):
+            continue
+        full_path = os.path.join(upload_folder, safe_name)
+        if os.path.isfile(full_path):
+            try:
+                os.remove(full_path)
+            except OSError:
+                pass
 
 
 def _require_admin():
@@ -219,7 +239,21 @@ def admin_get_items():
     items = db.session.execute(
         db.select(ShopItem).order_by(ShopItem.created_at.desc())
     ).scalars().all()
-    return {"items": [_serialize_item(item) for item in items]}, 200
+    if not items:
+        return {"items": []}, 200
+    ids = [i.id for i in items]
+    count_rows = db.session.execute(
+        db.select(ShopPurchaseRequest.item_id, func.count(ShopPurchaseRequest.id))
+        .where(ShopPurchaseRequest.item_id.in_(ids))
+        .group_by(ShopPurchaseRequest.item_id)
+    ).all()
+    count_map = {row[0]: row[1] for row in count_rows}
+    out = []
+    for item in items:
+        row = dict(_serialize_item(item))
+        row["purchase_requests_count"] = int(count_map.get(item.id, 0))
+        out.append(row)
+    return {"items": out}, 200
 
 
 @shop_bp.post("/admins/shop/items")
@@ -381,6 +415,29 @@ def admin_delete_item(item_id: int):
         return {"message": "item not found"}, 404
 
     item.is_active = False
+    db.session.commit()
+    return "", 204
+
+
+@shop_bp.delete("/admins/shop/items/<int:item_id>/permanent")
+@jwt_required()
+def admin_permanent_delete_item(item_id: int):
+    _, error = _require_admin()
+    if error:
+        return error
+
+    item = db.session.get(ShopItem, item_id)
+    if not item:
+        return {"message": "item not found"}, 404
+
+    has_requests = db.session.execute(
+        db.select(ShopPurchaseRequest.id).where(ShopPurchaseRequest.item_id == item_id).limit(1)
+    ).first()
+    if has_requests is not None:
+        return {"message": "cannot delete: item has purchase requests"}, 409
+
+    _remove_disk_files_for_item(item)
+    db.session.delete(item)
     db.session.commit()
     return "", 204
 
