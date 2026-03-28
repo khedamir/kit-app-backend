@@ -1,6 +1,7 @@
 from datetime import datetime
 from uuid import uuid4
 import os
+
 from flask import Blueprint, request, current_app, send_from_directory
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from werkzeug.utils import secure_filename
@@ -15,6 +16,19 @@ shop_bp = Blueprint("shop", __name__)
 
 ALLOWED_IMAGE_EXTENSIONS = {"jpg", "jpeg", "png", "webp", "gif"}
 
+SHOP_PHOTO_PATH_PREFIX = "/api/v1/uploads/"
+
+
+def _coerce_persisted_photos(photos: list) -> list[str]:
+    out: list[str] = []
+    for p in photos:
+        if not isinstance(p, str):
+            continue
+        s = p.strip()
+        if s.startswith(SHOP_PHOTO_PATH_PREFIX) and ".." not in s:
+            out.append(s)
+    return out
+
 
 def _serialize_item(item: ShopItem) -> dict:
     return {
@@ -23,7 +37,7 @@ def _serialize_item(item: ShopItem) -> dict:
         "description": item.description,
         "price_som": item.price_som,
         "quantity": item.quantity,
-        "photos": item.photos or [],
+        "photos": list(item.photos or []),
         "sizes": item.sizes or [],
         "is_active": item.is_active,
         "created_at": item.created_at.isoformat() if item.created_at else None,
@@ -82,7 +96,7 @@ def _save_uploaded_photos(files) -> list[str]:
         new_name = f"{uuid4().hex}.{ext}"
         full_path = os.path.join(upload_folder, new_name)
         image_file.save(full_path)
-        saved_urls.append(f"/api/v1/uploads/{new_name}")
+        saved_urls.append(f"{SHOP_PHOTO_PATH_PREFIX}{new_name}")
 
     return saved_urls
 
@@ -253,7 +267,7 @@ def admin_create_item():
         description=description,
         price_som=price_som,
         quantity=quantity,
-        photos=[str(p).strip() for p in photos if str(p).strip()],
+        photos=_coerce_persisted_photos(photos),
         sizes=[str(s).strip() for s in sizes if str(s).strip()],
         is_active=bool(data.get("is_active", True)),
     )
@@ -281,6 +295,41 @@ def admin_patch_item(item_id: int):
     if not item:
         return {"message": "item not found"}, 404
 
+    is_multipart = request.content_type and "multipart/form-data" in request.content_type
+    if is_multipart:
+        data = request.form or {}
+        uploaded_photo_urls = _save_uploaded_photos(request.files.getlist("photos"))
+        photos_raw = data.get("photo_urls", "")
+        photos = [p.strip() for p in photos_raw.split(",") if p.strip()]
+        photos.extend(uploaded_photo_urls)
+        sizes_raw = data.get("sizes", "")
+        sizes = [s.strip() for s in sizes_raw.split(",") if s.strip()]
+        name = (data.get("name") or "").strip()
+        description = (data.get("description") or "").strip() or None
+        if not name:
+            return {"message": "name is required"}, 400
+        try:
+            price_som = int(data.get("price_som"))
+            quantity = int(data.get("quantity"))
+        except (TypeError, ValueError):
+            return {"message": "price_som and quantity must be integers"}, 400
+        if price_som < 0 or quantity < 0:
+            return {"message": "price_som and quantity must be >= 0"}, 400
+        item.name = name
+        item.description = description
+        item.price_som = price_som
+        item.quantity = quantity
+        item.photos = _coerce_persisted_photos(photos)
+        item.sizes = [str(s).strip() for s in sizes if str(s).strip()]
+        if "is_active" in data:
+            raw = data.get("is_active")
+            if isinstance(raw, str):
+                item.is_active = raw.lower() in ("1", "true", "yes", "on")
+            else:
+                item.is_active = bool(raw)
+        db.session.commit()
+        return _serialize_item(item), 200
+
     data = request.get_json(silent=True) or {}
     if "name" in data:
         item.name = (data.get("name") or "").strip()
@@ -305,7 +354,7 @@ def admin_patch_item(item_id: int):
     if "photos" in data:
         if not isinstance(data["photos"], list):
             return {"message": "photos must be an array"}, 400
-        item.photos = [str(p).strip() for p in data["photos"] if str(p).strip()]
+        item.photos = _coerce_persisted_photos(data["photos"])
     if "sizes" in data:
         if not isinstance(data["sizes"], list):
             return {"message": "sizes must be an array"}, 400
