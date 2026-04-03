@@ -51,7 +51,7 @@ def init_scheduler(app):
             except Exception:
                 app.logger.exception("[scheduler] Daily journal points job failed")
 
-    @scheduler.scheduled_job("cron", day=3, hour=14, minute=10)
+    @scheduler.scheduled_job("cron", day=1, hour=3, minute=00)
     def monthly_finalize_job():
         with app.app_context():
             today = date.today()
