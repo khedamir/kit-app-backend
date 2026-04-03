@@ -5,6 +5,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 from .extensions import db
 from .services.grade_points_service import GradePointsService
+from .services.month_rollover_service import rollover_all_active_students
 
 
 def _get_journal_base_url() -> str:
@@ -26,7 +27,8 @@ def init_scheduler(app):
     Инициализация фонового планировщика задач.
 
     - Ежедневная задача в 03:00: обработка оценок за вчерашний день.
-    - Месячная задача в 02:00 первого числа месяца: финализация прошлого месяца.
+    - Месячная задача в 02:00 первого числа: сначала доначисление оценок журнала за прошлый месяц,
+      затем перенос current_month_points всех студентов в total_points и SOM и обнуление месяца.
 
     Часовой пояс: SCHEDULER_TIMEZONE (по умолчанию Europe/Moscow), чтобы «3 ночи»
     совпадало с локальным временем, а не UTC.
@@ -49,7 +51,7 @@ def init_scheduler(app):
             except Exception:
                 app.logger.exception("[scheduler] Daily journal points job failed")
 
-    @scheduler.scheduled_job("cron", day=1, hour=2, minute=0)
+    @scheduler.scheduled_job("cron", day=3, hour=11, minute=10)
     def monthly_finalize_job():
         with app.app_context():
             today = date.today()
@@ -70,6 +72,16 @@ def init_scheduler(app):
                 )
             except Exception:
                 app.logger.exception("[scheduler] Monthly journal finalize job failed")
+
+            try:
+                changed, moved = rollover_all_active_students(as_of=today)
+                app.logger.info(
+                    "[scheduler] Month rollover: profiles_touched=%s month_points_closed_sum=%s",
+                    changed,
+                    moved,
+                )
+            except Exception:
+                app.logger.exception("[scheduler] Month rollover to total_points failed")
 
     scheduler.start()
 

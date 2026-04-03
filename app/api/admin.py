@@ -14,6 +14,7 @@ from ..models.interests import Interest
 from ..models.points import PointCategory, PointTransaction
 from ..models.forum import ForumTopic, ForumMessage
 from ..models.journal_points import JournalProcessedMark
+from ..services.month_rollover_service import sync_profile_to_calendar_month
 
 admins_bp = Blueprint("admins", __name__)
 
@@ -669,29 +670,8 @@ def delete_point_category(category_id: int):
 
 
 def _ensure_current_month(profile: StudentProfile):
-    """Проверяем, не начался ли новый месяц для профиля."""
-    today = date.today()
-    month_start = date(today.year, today.month, 1)
-
-    # Если месяц уже выставлен и совпадает, ничего не делаем
-    if profile.current_month_started_at == month_start:
-        return
-
-    # Если ранее уже шёл учёт месяца, при смене месяца переносим баллы в общий счёт
-    if profile.current_month_started_at is not None:
-        month_points = profile.current_month_points or 0
-        if month_points != 0:
-            # Переносим месячные баллы в накопительные
-            profile.total_points = (profile.total_points or 0) + month_points
-            # SOM только с положительных баллов
-            positive_points = max(0, month_points)
-            som_earned = positive_points // 5
-            if som_earned > 0:
-                profile.total_som = (profile.total_som or 0) + som_earned
-
-    # Обнуляем счёт за месяц и обновляем дату начала месяца
-    profile.current_month_points = 0
-    profile.current_month_started_at = month_start
+    """Проверяем календарный месяц: перенос месячных баллов в total_* и SOM при смене месяца."""
+    sync_profile_to_calendar_month(profile)
 
 
 @admins_bp.post("/admins/students/<int:student_id>/points")
