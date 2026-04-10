@@ -15,6 +15,7 @@ from ..models.points import PointCategory, PointTransaction
 from ..models.forum import ForumTopic, ForumMessage
 from ..models.journal_points import JournalProcessedMark
 from ..services.month_rollover_service import sync_profile_to_calendar_month
+from ..services.notification_service import create_notification
 
 admins_bp = Blueprint("admins", __name__)
 
@@ -743,9 +744,35 @@ def add_student_points(student_id: int):
         created_by=admin_user.id,
     )
     db.session.add(transaction)
+    db.session.flush()
 
     # Обновляем баланс за текущий месяц
     profile.current_month_points = (profile.current_month_points or 0) + points
+
+    if points > 0:
+        create_notification(
+            user_id=profile.user_id,
+            notification_type="points_added",
+            title="Начислены баллы",
+            body=f"Вам начислено {points} баллов. {transaction.description or ''}".strip(),
+            payload={
+                "student_id": profile.id,
+                "transaction_id": transaction.id,
+                "points": points,
+            },
+        )
+    elif points < 0:
+        create_notification(
+            user_id=profile.user_id,
+            notification_type="points_deducted",
+            title="Списаны баллы",
+            body=f"У вас списано {abs(points)} баллов. {transaction.description or ''}".strip(),
+            payload={
+                "student_id": profile.id,
+                "transaction_id": transaction.id,
+                "points": points,
+            },
+        )
 
     db.session.commit()
 

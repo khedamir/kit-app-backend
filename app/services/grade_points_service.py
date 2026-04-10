@@ -14,6 +14,7 @@ from ..models.student import StudentProfile
 from ..models.journal_points import JournalProcessedMark
 from ..models.points import PointTransaction
 from . import journal_service
+from .notification_service import create_notification
 
 logger = logging.getLogger(__name__)
 
@@ -148,6 +149,31 @@ class GradePointsService:
                 )
                 self.session.add(transaction)
                 self.session.flush()  # чтобы получить transaction.id
+
+                if points > 0:
+                    create_notification(
+                        user_id=profile.user_id,
+                        notification_type="points_added",
+                        title="Начислены баллы",
+                        body=f"За оценку {jm.value} начислено {points} баллов.",
+                        payload={
+                            "transaction_id": transaction.id,
+                            "points": points,
+                            "source": "journal",
+                        },
+                    )
+                elif points < 0:
+                    create_notification(
+                        user_id=profile.user_id,
+                        notification_type="points_deducted",
+                        title="Списаны баллы",
+                        body=f"За оценку {jm.value} списано {abs(points)} баллов.",
+                        payload={
+                            "transaction_id": transaction.id,
+                            "points": points,
+                            "source": "journal",
+                        },
+                    )
 
                 processed_mark = JournalProcessedMark(
                     student_id=profile.id,

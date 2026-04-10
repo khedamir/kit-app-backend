@@ -14,6 +14,7 @@ from sqlalchemy import select
 from ..extensions import db
 from ..models.student import StudentProfile
 from ..models.user import User
+from .notification_service import create_notification
 
 
 def sync_profile_to_calendar_month(
@@ -42,6 +43,21 @@ def sync_profile_to_calendar_month(
             som_add = positive // 5
             if som_add > 0:
                 profile.total_som = (profile.total_som or 0) + som_add
+            create_notification(
+                user_id=profile.user_id,
+                notification_type="month_points_closed",
+                title="Баллы за месяц перенесены в общий счет",
+                body=f"Перенесено {mp} баллов за прошлый месяц.",
+                payload={"moved_points": mp, "som_added": som_add},
+            )
+            if som_add > 0:
+                create_notification(
+                    user_id=profile.user_id,
+                    notification_type="som_added",
+                    title="Начислены SOM",
+                    body=f"Вам начислено {som_add} SOM за прошлый месяц.",
+                    payload={"som_added": som_add, "moved_points": mp},
+                )
 
     profile.current_month_points = 0
     profile.current_month_started_at = month_start

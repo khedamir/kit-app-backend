@@ -11,6 +11,11 @@ from ..extensions import db
 from ..models.user import User
 from ..models.student import StudentProfile
 from ..models.shop import ShopItem, ShopPurchaseRequest
+from ..services.notification_service import (
+    create_notifications_for_users,
+    get_active_admin_user_ids,
+    get_active_student_user_ids,
+)
 
 
 shop_bp = Blueprint("shop", __name__)
@@ -167,7 +172,7 @@ def get_shop_item(item_id: int):
 @shop_bp.post("/shop/purchase-requests")
 @jwt_required()
 def create_purchase_request():
-    _, profile, error = _require_student()
+    user, profile, error = _require_student()
     if error:
         return error
 
@@ -209,6 +214,26 @@ def create_purchase_request():
         status="pending",
     )
     db.session.add(pr)
+    db.session.flush()
+
+    admin_user_ids = get_active_admin_user_ids()
+    student_name = (
+        f"{(profile.first_name or '').strip()} {(profile.last_name or '').strip()}".strip()
+        or user.email
+    )
+    create_notifications_for_users(
+        user_ids=admin_user_ids,
+        notification_type="shop_purchase_request_created",
+        title="Новая заявка на покупку товара",
+        body=f"{student_name} отправил(а) заявку на '{item.name}' x{quantity}.",
+        payload={
+            "purchase_request_id": pr.id,
+            "item_id": item.id,
+            "student_id": profile.id,
+            "quantity": quantity,
+            "total_price_som": total_price,
+        },
+    )
     db.session.commit()
 
     return _serialize_request(pr), 201
@@ -306,6 +331,15 @@ def admin_create_item():
         is_active=bool(data.get("is_active", True)),
     )
     db.session.add(item)
+    db.session.flush()
+    student_ids = get_active_student_user_ids()
+    create_notifications_for_users(
+        user_ids=student_ids,
+        notification_type="shop_new_item",
+        title="Новый товар в магазине",
+        body=item.name,
+        payload={"item_id": item.id, "price_som": item.price_som},
+    )
     db.session.commit()
     return _serialize_item(item), 201
 

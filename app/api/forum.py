@@ -6,6 +6,11 @@ from sqlalchemy import func
 from ..extensions import db
 from ..models.user import User
 from ..models.forum import ForumTopic, ForumMessage
+from ..services.notification_service import (
+    create_notification,
+    create_notifications_for_users,
+    get_active_student_user_ids,
+)
 
 forum_bp = Blueprint("forum", __name__)
 
@@ -115,6 +120,18 @@ def create_topic():
         author_id=user.id
     )
     db.session.add(topic)
+    db.session.flush()
+
+    student_ids = get_active_student_user_ids(
+        exclude_user_id=user.id if user.role == "student" else None
+    )
+    create_notifications_for_users(
+        user_ids=student_ids,
+        notification_type="forum_new_topic",
+        title="Новый топик на форуме",
+        body=title,
+        payload={"topic_id": topic.id},
+    )
     db.session.commit()
 
     return topic.to_dict(), 201
@@ -312,6 +329,24 @@ def create_message(topic_id: int):
         parent_id=parent_id
     )
     db.session.add(message)
+    db.session.flush()
+
+    if parent_id is not None:
+        parent_message = db.session.get(ForumMessage, parent_id)
+        if parent_message and parent_message.author_id != user.id:
+            parent_author = db.session.get(User, parent_message.author_id)
+            if parent_author and parent_author.is_active and parent_author.role == "student":
+                create_notification(
+                    user_id=parent_author.id,
+                    notification_type="forum_reply",
+                    title="Новый ответ на ваше сообщение",
+                    body=content[:200],
+                    payload={
+                        "topic_id": topic.id,
+                        "message_id": message.id,
+                        "parent_message_id": parent_message.id,
+                    },
+                )
     db.session.commit()
 
     return message.to_dict(include_replies=False), 201

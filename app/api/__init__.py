@@ -29,3 +29,6 @@ api_bp.register_blueprint(forum_bp)
 
 from .shop import shop_bp  # noqa: E402
 api_bp.register_blueprint(shop_bp)
+
+from .notifications import notifications_bp  # noqa: E402
+api_bp.register_blueprint(notifications_bp)

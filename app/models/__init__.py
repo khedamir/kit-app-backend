@@ -12,3 +12,4 @@ from .forum import ForumTopic, ForumMessage
 from .points import PointCategory, PointTransaction
 from .journal_points import JournalProcessedMark
 from .shop import ShopItem, ShopPurchaseRequest
+from .notification import Notification
